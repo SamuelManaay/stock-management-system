@@ -43,6 +43,10 @@ const Scanner = () => {
         showTorchButtonIfSupported: true,
         showZoomSliderIfSupported: true,
         defaultZoomValueIfSupported: 2,
+        rememberLastUsedCamera: true,
+        supportedScanTypes: [
+          Html5QrcodeScanner.SCAN_TYPE_CAMERA
+        ]
       })
 
       scanner.render(onScanSuccess, onScanError)
