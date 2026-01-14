@@ -17,6 +17,7 @@ const Scanner = () => {
   const [error, setError] = useState('')
   const videoRef = useRef(null)
   const readerRef = useRef(null)
+  const streamRef = useRef(null)
 
   const [formData, setFormData] = useState({
     item_code: '',
@@ -75,12 +76,44 @@ const Scanner = () => {
     try {
       setScanning(true)
       setError('')
-      const result = await readerRef.current.decodeOnceFromVideoDevice(undefined, videoRef.current)
-      handleScannedCode(result.text)
-      setScanning(false)
+      
+      // Get camera stream and attach to video
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      })
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        streamRef.current = stream
+        
+        // Wait for video to be ready
+        await new Promise((resolve) => {
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current.play()
+            resolve()
+          }
+        })
+      }
+      
+      // Start continuous scanning
+      readerRef.current.decodeFromVideoDevice(undefined, videoRef.current, (result, err) => {
+        if (result) {
+          handleScannedCode(result.text)
+        }
+      })
     } catch (err) {
       console.error('Scan error:', err)
-      setError('Failed to scan. Please try again.')
+      if (err.name === 'NotAllowedError') {
+        setError('Camera permission denied. Please allow camera access.')
+      } else if (err.name === 'NotFoundError') {
+        setError('No camera found on this device.')
+      } else {
+        setError('Failed to start camera: ' + err.message)
+      }
       setScanning(false)
     }
   }
@@ -88,6 +121,13 @@ const Scanner = () => {
   const stopCamera = () => {
     if (readerRef.current) {
       readerRef.current.reset()
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
     }
     setScanning(false)
   }
