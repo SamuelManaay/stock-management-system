@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 import { Package, Users, Clock, DollarSign, AlertTriangle } from 'lucide-react'
 
 const Dashboard = () => {
+  const { userProfile } = useAuth()
   const [stats, setStats] = useState({
     totalEmployees: 0,
     activeProjects: 0,
@@ -12,43 +14,53 @@ const Dashboard = () => {
   })
   const [loading, setLoading] = useState(true)
 
+  const isAdmin = userProfile?.role === 'admin'
+
   useEffect(() => {
     fetchDashboardStats()
   }, [])
 
   const fetchDashboardStats = async () => {
     try {
-      // Fetch employees count
-      const { count: employeesCount } = await supabase
-        .from('employees')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'active')
+      // Only fetch employee and project counts for admin
+      if (isAdmin) {
+        const { count: employeesCount } = await supabase
+          .from('employees')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'active')
 
-      // Fetch active projects count
-      const { count: projectsCount } = await supabase
-        .from('projects')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'active')
+        const { count: projectsCount } = await supabase
+          .from('projects')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'active')
 
-      // Fetch low stock items
-      const { count: lowStockCount } = await supabase
+        const today = new Date().toISOString().split('T')[0]
+        const { count: attendanceCount } = await supabase
+          .from('attendance_logs')
+          .select('*', { count: 'exact', head: true })
+          .eq('attendance_date', today)
+
+        setStats(prev => ({
+          ...prev,
+          totalEmployees: employeesCount || 0,
+          activeProjects: projectsCount || 0,
+          todayAttendance: attendanceCount || 0
+        }))
+      }
+
+      // Fetch low stock items for everyone
+      const { data: lowStockData } = await supabase
         .from('inventory_items')
-        .select('*', { count: 'exact', head: true })
-        .lt('current_quantity', 'minimum_quantity')
+        .select('current_quantity, minimum_quantity')
+      
+      const lowStockCount = lowStockData?.filter(
+        item => item.current_quantity < item.minimum_quantity
+      ).length || 0
 
-      // Fetch today's attendance
-      const today = new Date().toISOString().split('T')[0]
-      const { count: attendanceCount } = await supabase
-        .from('attendance_logs')
-        .select('*', { count: 'exact', head: true })
-        .eq('attendance_date', today)
-
-      setStats({
-        totalEmployees: employeesCount || 0,
-        activeProjects: projectsCount || 0,
-        lowStockItems: lowStockCount || 0,
-        todayAttendance: attendanceCount || 0
-      })
+      setStats(prev => ({
+        ...prev,
+        lowStockItems: lowStockCount
+      }))
     } catch (error) {
       console.error('Error fetching dashboard stats:', error)
     } finally {
@@ -56,7 +68,7 @@ const Dashboard = () => {
     }
   }
 
-  const statCards = [
+  const statCards = isAdmin ? [
     {
       title: 'Total Employees',
       value: stats.totalEmployees,
@@ -75,6 +87,13 @@ const Dashboard = () => {
       icon: Clock,
       color: 'bg-purple-500'
     },
+    {
+      title: 'Low Stock Items',
+      value: stats.lowStockItems,
+      icon: AlertTriangle,
+      color: 'bg-red-500'
+    }
+  ] : [
     {
       title: 'Low Stock Items',
       value: stats.lowStockItems,
@@ -134,11 +153,13 @@ const Dashboard = () => {
             <p className="text-sm text-gray-600">Manage stock items</p>
           </Link>
           
-          <Link to="/payroll" className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 text-left block">
-            <DollarSign className="h-8 w-8 text-purple-600 mb-2" />
-            <h3 className="font-medium">Generate Payroll</h3>
-            <p className="text-sm text-gray-600">Process payments</p>
-          </Link>
+          {isAdmin && (
+            <Link to="/payroll" className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 text-left block">
+              <DollarSign className="h-8 w-8 text-purple-600 mb-2" />
+              <h3 className="font-medium">Generate Payroll</h3>
+              <p className="text-sm text-gray-600">Process payments</p>
+            </Link>
+          )}
         </div>
       </div>
 

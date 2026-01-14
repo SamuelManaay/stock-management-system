@@ -6,7 +6,11 @@ import {
   Package, 
   Clock, 
   Users, 
-  DollarSign, 
+  DollarSign,
+  Briefcase,
+  FolderOpen,
+  Scan,
+  FileText,
   Menu, 
   X, 
   LogOut 
@@ -21,7 +25,11 @@ const Layout = ({ children }) => {
     { name: 'Dashboard', href: '/', icon: Home },
     { name: 'Inventory', href: '/inventory', icon: Package },
     { name: 'Attendance', href: '/attendance', icon: Clock },
-    { name: 'Employees', href: '/employees', icon: Users },
+    ...(userProfile?.role === 'admin' || userProfile?.role === 'hr' ? [{ name: 'Employees', href: '/employees', icon: Users }] : []),
+    ...(userProfile?.role === 'admin' || userProfile?.role === 'hr' ? [{ name: 'Projects', href: '/projects', icon: FolderOpen }] : []),
+    ...(userProfile?.role === 'admin' ? [{ name: 'Roles', href: '/roles', icon: Briefcase }] : []),
+    { name: 'Scanner', href: '/scanner', icon: Scan },
+    { name: 'Daily Logs', href: '/daily-logs', icon: FileText },
     { name: userProfile?.role === 'worker' ? 'Payslip' : 'Payroll', href: '/payroll', icon: DollarSign },
   ]
 

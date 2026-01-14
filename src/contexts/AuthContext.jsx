@@ -43,18 +43,15 @@ export const AuthProvider = ({ children }) => {
   }, [])
 
   const fetchUserProfile = async (userId) => {
-    // Set timeout to prevent infinite loading
-    const timeoutId = setTimeout(() => {
-      console.log('Profile fetch timeout, using fallback')
-      setUserProfile({ id: userId, role: 'worker' })
-      setLoading(false)
-    }, 1000)
-
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000)
+
       const { data, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
+        .abortSignal(controller.signal)
         .single()
 
       clearTimeout(timeoutId)
@@ -62,12 +59,13 @@ export const AuthProvider = ({ children }) => {
       if (error) {
         console.error('Error fetching user profile:', error)
         setUserProfile({ id: userId, role: 'worker' })
-      } else {
+      } else if (data) {
         setUserProfile(data)
       }
     } catch (error) {
-      clearTimeout(timeoutId)
-      if (error.name !== 'AbortError') {
+      if (error.name === 'AbortError') {
+        console.log('Profile fetch timeout')
+      } else {
         console.error('Error fetching user profile:', error)
       }
       setUserProfile({ id: userId, role: 'worker' })

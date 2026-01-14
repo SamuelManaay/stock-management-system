@@ -7,7 +7,9 @@ const Employees = () => {
   const { userProfile } = useAuth()
   const [employees, setEmployees] = useState([])
   const [projects, setProjects] = useState([])
+  const [roles, setRoles] = useState([])
   const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
@@ -30,22 +32,10 @@ const Employees = () => {
     { value: 'monthly', label: 'Monthly' }
   ]
 
-  const roles = [
-    'Laborer',
-    'Foreman',
-    'Engineer',
-    'Supervisor',
-    'Admin',
-    'Operator',
-    'Electrician',
-    'Plumber',
-    'Carpenter',
-    'Mason'
-  ]
-
   useEffect(() => {
     fetchEmployees()
     fetchProjects()
+    fetchRoles()
   }, [])
 
   const fetchEmployees = async () => {
@@ -75,6 +65,7 @@ const Employees = () => {
         .from('projects')
         .select('id, name')
         .eq('status', 'active')
+        .order('name')
 
       if (error) throw error
       setProjects(data || [])
@@ -83,9 +74,24 @@ const Employees = () => {
     }
   }
 
+  const fetchRoles = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('roles')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('name')
+
+      if (error) throw error
+      setRoles(data || [])
+    } catch (error) {
+      console.error('Error fetching roles:', error)
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setLoading(true)
+    setSubmitting(true)
 
     try {
       if (editingEmployee) {
@@ -109,7 +115,7 @@ const Employees = () => {
       console.error('Error saving employee:', error)
       alert('Error saving employee. Please try again.')
     } finally {
-      setLoading(false)
+      setSubmitting(false)
     }
   }
 
@@ -354,7 +360,7 @@ const Employees = () => {
                 >
                   <option value="">Select Role</option>
                   {roles.map(role => (
-                    <option key={role} value={role}>{role}</option>
+                    <option key={role.id} value={role.name}>{role.name}</option>
                   ))}
                 </select>
               </div>
@@ -381,7 +387,11 @@ const Employees = () => {
                     step="0.01"
                     className="input-field mt-1"
                     value={formData.daily_rate}
-                    onChange={(e) => setFormData({...formData, daily_rate: parseFloat(e.target.value) || 0})}
+                    onChange={(e) => {
+                      const dailyRate = parseFloat(e.target.value) || 0
+                      const hourlyRate = dailyRate > 0 ? (dailyRate / 8).toFixed(2) : 0
+                      setFormData({...formData, daily_rate: dailyRate, hourly_rate: parseFloat(hourlyRate)})
+                    }}
                   />
                 </div>
                 
@@ -393,7 +403,11 @@ const Employees = () => {
                     step="0.01"
                     className="input-field mt-1"
                     value={formData.hourly_rate}
-                    onChange={(e) => setFormData({...formData, hourly_rate: parseFloat(e.target.value) || 0})}
+                    onChange={(e) => {
+                      const hourlyRate = parseFloat(e.target.value) || 0
+                      const dailyRate = hourlyRate > 0 ? (hourlyRate * 8).toFixed(2) : 0
+                      setFormData({...formData, hourly_rate: hourlyRate, daily_rate: parseFloat(dailyRate)})
+                    }}
                   />
                 </div>
               </div>
@@ -434,10 +448,10 @@ const Employees = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={submitting}
                   className="btn-primary disabled:opacity-50"
                 >
-                  {loading ? 'Saving...' : (editingEmployee ? 'Update' : 'Add Employee')}
+                  {submitting ? 'Saving...' : (editingEmployee ? 'Update' : 'Add Employee')}
                 </button>
               </div>
             </form>

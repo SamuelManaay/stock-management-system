@@ -6,6 +6,10 @@ import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
 import Attendance from './pages/Attendance'
 import Employees from './pages/Employees'
+import Roles from './pages/Roles'
+import Projects from './pages/Projects'
+import Scanner from './pages/Scanner'
+import DailyLogs from './pages/DailyLogs'
 import Payroll from './pages/Payroll'
 import Payslip from './pages/Payslip'
 import LoadingSpinner from './components/LoadingSpinner'
@@ -52,6 +56,34 @@ const AppRoutes = () => {
         <ProtectedRoute>
           <Layout>
             <Employees />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/roles" element={
+        <ProtectedRoute>
+          <Layout>
+            <Roles />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/projects" element={
+        <ProtectedRoute>
+          <Layout>
+            <Projects />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/scanner" element={
+        <ProtectedRoute>
+          <Layout>
+            <Scanner />
+          </Layout>
+        </ProtectedRoute>
+      } />
+      <Route path="/daily-logs" element={
+        <ProtectedRoute>
+          <Layout>
+            <DailyLogs />
           </Layout>
         </ProtectedRoute>
       } />
