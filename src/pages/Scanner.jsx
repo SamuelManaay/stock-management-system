@@ -316,6 +316,9 @@ const Scanner = () => {
             <div className="relative bg-black rounded-lg overflow-hidden" style={{ height: '400px' }}>
               <video
                 ref={videoRef}
+                autoPlay
+                playsInline
+                muted
                 style={{ 
                   width: '100%',
                   height: '100%',
@@ -336,7 +339,7 @@ const Scanner = () => {
                 Stop Scanner
               </button>
             </div>
-            <p className="text-sm text-center text-gray-600">Position barcode within the red box</p>
+            <p className="text-sm text-center text-gray-600">Scanning... Position barcode within the red box</p>
           </div>
         )}
 

@@ -17,6 +17,12 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Set a maximum loading time of 10 seconds
+    const maxLoadingTimeout = setTimeout(() => {
+      console.log('Max loading timeout reached, stopping loading')
+      setLoading(false)
+    }, 10000)
+
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       console.log('Session:', session)
@@ -26,6 +32,11 @@ export const AuthProvider = ({ children }) => {
       } else {
         setLoading(false)
       }
+      clearTimeout(maxLoadingTimeout)
+    }).catch(err => {
+      console.error('Session error:', err)
+      setLoading(false)
+      clearTimeout(maxLoadingTimeout)
     })
 
     // Listen for auth changes
@@ -39,7 +50,10 @@ export const AuthProvider = ({ children }) => {
       setLoading(false)
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      clearTimeout(maxLoadingTimeout)
+      subscription.unsubscribe()
+    }
   }, [])
 
   const fetchUserProfile = async (userId) => {
