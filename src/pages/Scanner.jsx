@@ -43,7 +43,6 @@ const Scanner = () => {
     setCameraError('')
     
     try {
-      // Check if running on HTTPS or localhost
       const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost'
       if (!isSecure && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
         setCameraError('Camera requires HTTPS on iOS/iPad. Please deploy to Netlify or use localhost on desktop.')
@@ -56,11 +55,18 @@ const Scanner = () => {
         return
       }
 
+      // Find back camera (environment facing)
+      const backCamera = devices.find(device => 
+        device.label.toLowerCase().includes('back') || 
+        device.label.toLowerCase().includes('rear') ||
+        device.label.toLowerCase().includes('environment')
+      ) || devices[devices.length - 1] // Use last camera if no back camera found
+
       const scanner = new Html5Qrcode('reader')
       scannerRef.current = scanner
 
       await scanner.start(
-        devices[0].id,
+        backCamera.id,
         { fps: 10, qrbox: 250 },
         onScanSuccess
       )
