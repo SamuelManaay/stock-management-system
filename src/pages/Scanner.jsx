@@ -1,21 +1,19 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
+import { useZxing } from 'react-zxing'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { Html5QrcodeScanner } from 'html5-qrcode'
-import { Package, Download } from 'lucide-react'
+import { Package, Download, X } from 'lucide-react'
 import { format } from 'date-fns'
 
 const Scanner = () => {
   const { userProfile } = useAuth()
   const [scannedCode, setScannedCode] = useState('')
+  const [showQuantityModal, setShowQuantityModal] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [currentItem, setCurrentItem] = useState(null)
   const [todayLogs, setTodayLogs] = useState([])
   const [loading, setLoading] = useState(false)
-  const [processing, setProcessing] = useState(false)
-  const scannerRef = useRef(null)
-  const scannerInitialized = useRef(false)
-  const lastScannedCode = useRef('')
-  const lastScanTime = useRef(0)
+  const [quantityInput, setQuantityInput] = useState('1')
 
   const [formData, setFormData] = useState({
     item_code: '',
@@ -26,34 +24,17 @@ const Scanner = () => {
     notes: ''
   })
 
-  const categories = ['materials', 'tools', 'equipment']
-  const units = ['pcs', 'kg', 'lbs', 'meters', 'feet', 'liters', 'gallons', 'boxes']
+  const { ref } = useZxing({
+    onDecodeResult(result) {
+      const code = result.getText()
+      if (code && code !== scannedCode) {
+        handleScannedCode(code)
+      }
+    },
+  })
 
   useEffect(() => {
     fetchTodayLogs()
-
-    // Initialize scanner
-    if (!scannerInitialized.current) {
-      scannerInitialized.current = true
-      
-      const scanner = new Html5QrcodeScanner('reader', {
-        fps: 20,
-        qrbox: { width: 250, height: 250 },
-        disableFlip: false,
-        rememberLastUsedCamera: true,
-        showTorchButtonIfSupported: true,
-        showZoomSliderIfSupported: true,
-      })
-
-      scanner.render(onScanSuccess, onScanError)
-      scannerRef.current = scanner
-    }
-
-    return () => {
-      if (scannerRef.current) {
-        scannerRef.current.clear().catch(console.error)
-      }
-    }
   }, [])
 
   const fetchTodayLogs = async () => {
@@ -72,30 +53,8 @@ const Scanner = () => {
     }
   }
 
-  const onScanSuccess = (decodedText) => {
-    const now = Date.now()
-    if (decodedText === lastScannedCode.current && now - lastScanTime.current < 2000) {
-      return
-    }
-    
-    lastScannedCode.current = decodedText
-    lastScanTime.current = now
-    
-    if (!processing) {
-      handleScannedCode(decodedText)
-    }
-  }
-
-  const onScanError = (err) => {
-    // Ignore scan errors (happens continuously while scanning)
-  }
-
   const handleScannedCode = async (code) => {
-    if (processing) return
-    
-    setProcessing(true)
     setScannedCode(code)
-    console.log('Scanned:', code)
 
     try {
       const { data: existingItem, error } = await supabase
@@ -107,56 +66,55 @@ const Scanner = () => {
       if (error) throw error
 
       if (existingItem) {
-        const quantity = parseFloat(prompt('Enter quantity to add:', '1'))
-        if (quantity && quantity > 0) {
-          await updateExistingItem(existingItem, quantity)
-        }
-        setProcessing(false)
+        setCurrentItem(existingItem)
+        setQuantityInput('1')
+        setShowQuantityModal(true)
       } else {
-        console.log('New item, showing modal')
         setFormData(prev => ({ ...prev, item_code: code }))
         setShowAddModal(true)
-        setProcessing(false)
       }
     } catch (error) {
       console.error('Error:', error)
       alert('Error: ' + error.message)
-      setProcessing(false)
     }
   }
 
-  const updateExistingItem = async (item, quantity) => {
+  const handleQuantitySubmit = async () => {
+    const quantity = parseFloat(quantityInput)
+    if (!quantity || quantity <= 0) {
+      alert('Please enter a valid quantity')
+      return
+    }
+
     setLoading(true)
     try {
-      const newQuantity = parseFloat(item.current_quantity) + quantity
+      const newQuantity = parseFloat(currentItem.current_quantity) + quantity
       const { error: updateError } = await supabase
         .from('inventory_items')
         .update({ current_quantity: newQuantity })
-        .eq('id', item.id)
+        .eq('id', currentItem.id)
 
       if (updateError) throw updateError
 
-      const { error: logError } = await supabase
-        .from('daily_item_logs')
-        .insert([{
-          item_code: item.item_code,
-          item_name: item.name,
-          category: item.category,
-          quantity: quantity,
-          unit: item.unit,
-          action_type: 'update',
-          scanned_by: userProfile.id,
-          notes: `Updated quantity from ${item.current_quantity} to ${newQuantity}`
-        }])
+      await supabase.from('daily_item_logs').insert([{
+        item_code: currentItem.item_code,
+        item_name: currentItem.name,
+        category: currentItem.category,
+        quantity: quantity,
+        unit: currentItem.unit,
+        action_type: 'update',
+        scanned_by: userProfile.id,
+        notes: `Updated quantity from ${currentItem.current_quantity} to ${newQuantity}`
+      }])
 
-      if (logError) throw logError
-
-      alert(`Updated ${item.name}: +${quantity} ${item.unit}`)
+      alert(`✓ ${currentItem.name}: +${quantity} ${currentItem.unit}`)
       await fetchTodayLogs()
+      setShowQuantityModal(false)
       setScannedCode('')
+      setCurrentItem(null)
     } catch (error) {
       console.error('Error updating item:', error)
-      alert('Error updating item. Please try again.')
+      alert('Error updating item')
     } finally {
       setLoading(false)
     }
@@ -167,35 +125,27 @@ const Scanner = () => {
     setLoading(true)
 
     try {
-      const { error: addError } = await supabase
-        .from('inventory_items')
-        .insert([{
-          item_code: formData.item_code,
-          name: formData.item_name,
-          category: formData.category,
-          current_quantity: formData.quantity,
-          minimum_quantity: 0,
-          unit: formData.unit
-        }])
+      await supabase.from('inventory_items').insert([{
+        item_code: formData.item_code,
+        name: formData.item_name,
+        category: formData.category,
+        current_quantity: formData.quantity,
+        minimum_quantity: 0,
+        unit: formData.unit
+      }])
 
-      if (addError) throw addError
+      await supabase.from('daily_item_logs').insert([{
+        item_code: formData.item_code,
+        item_name: formData.item_name,
+        category: formData.category,
+        quantity: formData.quantity,
+        unit: formData.unit,
+        action_type: 'add',
+        scanned_by: userProfile.id,
+        notes: formData.notes
+      }])
 
-      const { error: logError } = await supabase
-        .from('daily_item_logs')
-        .insert([{
-          item_code: formData.item_code,
-          item_name: formData.item_name,
-          category: formData.category,
-          quantity: formData.quantity,
-          unit: formData.unit,
-          action_type: 'add',
-          scanned_by: userProfile.id,
-          notes: formData.notes
-        }])
-
-      if (logError) throw logError
-
-      alert('Item added successfully!')
+      alert('✓ Item added successfully!')
       await fetchTodayLogs()
       setShowAddModal(false)
       setScannedCode('')
@@ -209,7 +159,7 @@ const Scanner = () => {
       })
     } catch (error) {
       console.error('Error adding item:', error)
-      alert('Error adding item. Please try again.')
+      alert('Error adding item')
     } finally {
       setLoading(false)
     }
@@ -262,9 +212,181 @@ const Scanner = () => {
 
       {/* Scanner */}
       <div className="card">
-        <h2 className="text-lg font-semibold mb-4">Scan Barcode/QR Code</h2>
-        <div id="reader" style={{ width: '100%' }}></div>
+        <h2 className="text-lg font-semibold mb-4">Scan Barcode</h2>
+        <div className="relative bg-black rounded-lg overflow-hidden" style={{ maxWidth: '500px', margin: '0 auto' }}>
+          <video ref={ref} className="w-full" />
+        </div>
+        {scannedCode && (
+          <p className="mt-4 text-center text-sm text-gray-600">
+            Last scanned: <span className="font-mono font-semibold">{scannedCode}</span>
+          </p>
+        )}
       </div>
+
+      {/* Quantity Modal */}
+      {showQuantityModal && currentItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Add Quantity</h3>
+              <button onClick={() => setShowQuantityModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-gray-600">Item Code</p>
+                <p className="font-mono font-semibold">{currentItem.item_code}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Item Name</p>
+                <p className="font-semibold">{currentItem.name}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Current Stock</p>
+                <p className="font-semibold">{currentItem.current_quantity} {currentItem.unit}</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Quantity to Add
+                </label>
+                <input
+                  type="number"
+                  value={quantityInput}
+                  onChange={(e) => setQuantityInput(e.target.value)}
+                  className="input"
+                  min="0.01"
+                  step="0.01"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowQuantityModal(false)}
+                  className="btn-secondary flex-1"
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleQuantitySubmit}
+                  className="btn-primary flex-1"
+                  disabled={loading}
+                >
+                  {loading ? 'Adding...' : 'Add'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add New Item Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Add New Item</h3>
+              <button onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleAddNewItem} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Item Code</label>
+                <input
+                  type="text"
+                  value={formData.item_code}
+                  onChange={(e) => setFormData({ ...formData, item_code: e.target.value })}
+                  className="input"
+                  required
+                  readOnly
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Item Name</label>
+                <input
+                  type="text"
+                  value={formData.item_name}
+                  onChange={(e) => setFormData({ ...formData, item_name: e.target.value })}
+                  className="input"
+                  required
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className="input"
+                >
+                  <option value="materials">Materials</option>
+                  <option value="tools">Tools</option>
+                  <option value="equipment">Equipment</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Initial Quantity</label>
+                <input
+                  type="number"
+                  value={formData.quantity}
+                  onChange={(e) => setFormData({ ...formData, quantity: parseFloat(e.target.value) })}
+                  className="input"
+                  min="0.01"
+                  step="0.01"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Unit</label>
+                <select
+                  value={formData.unit}
+                  onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                  className="input"
+                >
+                  <option value="pcs">Pieces</option>
+                  <option value="kg">Kilograms</option>
+                  <option value="lbs">Pounds</option>
+                  <option value="meters">Meters</option>
+                  <option value="feet">Feet</option>
+                  <option value="liters">Liters</option>
+                  <option value="gallons">Gallons</option>
+                  <option value="boxes">Boxes</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
+                <textarea
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  className="input"
+                  rows="2"
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="btn-secondary flex-1"
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary flex-1"
+                  disabled={loading}
+                >
+                  {loading ? 'Adding...' : 'Add Item'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Today's Logs */}
       <div className="card">
@@ -294,17 +416,15 @@ const Scanner = () => {
                     <td className="px-4 py-3 text-sm text-gray-900">
                       {format(new Date(log.created_at), 'HH:mm:ss')}
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{log.item_code}</td>
+                    <td className="px-4 py-3 text-sm font-mono text-gray-900">{log.item_code}</td>
                     <td className="px-4 py-3 text-sm text-gray-900">{log.item_name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-600 capitalize">{log.category}</td>
+                    <td className="px-4 py-3 text-sm text-gray-900 capitalize">{log.category}</td>
                     <td className="px-4 py-3 text-sm text-gray-900">
                       {log.quantity} {log.unit}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        log.action_type === 'add' 
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-blue-100 text-blue-800'
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        log.action_type === 'add' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
                       }`}>
                         {log.action_type}
                       </span>
@@ -316,110 +436,6 @@ const Scanner = () => {
           </div>
         )}
       </div>
-
-      {/* Add New Item Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-            <h2 className="text-lg font-semibold mb-4">Add New Item</h2>
-            
-            <form onSubmit={handleAddNewItem} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Item Code</label>
-                <input
-                  type="text"
-                  required
-                  readOnly
-                  className="input-field mt-1 bg-gray-100"
-                  value={formData.item_code}
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Item Name</label>
-                <input
-                  type="text"
-                  required
-                  className="input-field mt-1"
-                  value={formData.item_name}
-                  onChange={(e) => setFormData({...formData, item_name: e.target.value})}
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Category</label>
-                <select
-                  className="input-field mt-1"
-                  value={formData.category}
-                  onChange={(e) => setFormData({...formData, category: e.target.value})}
-                >
-                  {categories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Quantity</label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
-                    className="input-field mt-1"
-                    value={formData.quantity}
-                    onChange={(e) => setFormData({...formData, quantity: parseFloat(e.target.value)})}
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Unit</label>
-                  <select
-                    className="input-field mt-1"
-                    value={formData.unit}
-                    onChange={(e) => setFormData({...formData, unit: e.target.value})}
-                  >
-                    {units.map(unit => (
-                      <option key={unit} value={unit}>{unit}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Notes</label>
-                <textarea
-                  className="input-field mt-1"
-                  rows="2"
-                  value={formData.notes}
-                  onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                />
-              </div>
-              
-              <div className="flex justify-end space-x-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddModal(false)
-                    setScannedCode('')
-                  }}
-                  className="btn-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="btn-primary disabled:opacity-50"
-                >
-                  {loading ? 'Adding...' : 'Add Item'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
