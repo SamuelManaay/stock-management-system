@@ -118,6 +118,10 @@ const Layout = ({ children }) => {
               <span className="text-sm text-gray-600">
                 Welcome, {userProfile?.role || 'User'}
               </span>
+              {/* Debug: Show user email on mobile */}
+              <span className="text-xs text-gray-400 lg:hidden">
+                ({userProfile?.email || 'no email'})
+              </span>
               <button
                 onClick={handleSignOut}
                 className="lg:hidden flex items-center text-gray-500 hover:text-gray-700"

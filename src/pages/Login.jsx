@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import { Building2 } from 'lucide-react'
+import { Building2, AlertCircle } from 'lucide-react'
 
 const Login = () => {
   const [isSignUp, setIsSignUp] = useState(false)
@@ -10,7 +10,19 @@ const Login = () => {
   const [employeeCode, setEmployeeCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [storageWarning, setStorageWarning] = useState(false)
   const { signIn, signUp } = useAuth()
+
+  useEffect(() => {
+    // Check localStorage availability
+    try {
+      const test = '__test__'
+      window.localStorage.setItem(test, test)
+      window.localStorage.removeItem(test)
+    } catch (e) {
+      setStorageWarning(true)
+    }
+  }, [])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -71,6 +83,16 @@ const Login = () => {
         </div>
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          {storageWarning && (
+            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-start">
+              <AlertCircle className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <strong>Warning:</strong> Browser storage is disabled. You may be logged out on page reload. 
+                Please enable cookies/storage in your browser settings or disable private browsing mode.
+              </div>
+            </div>
+          )}
+          
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg">
               {error}
