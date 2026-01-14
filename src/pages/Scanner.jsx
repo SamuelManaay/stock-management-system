@@ -37,16 +37,11 @@ const Scanner = () => {
       scannerInitialized.current = true
       
       const scanner = new Html5QrcodeScanner('reader', {
-        fps: 10,
-        qrbox: { width: 300, height: 300 },
-        aspectRatio: 1.0,
-        showTorchButtonIfSupported: true,
-        showZoomSliderIfSupported: true,
-        defaultZoomValueIfSupported: 2,
-        rememberLastUsedCamera: true,
-        supportedScanTypes: [
-          Html5QrcodeScanner.SCAN_TYPE_CAMERA
-        ]
+        qrbox: {
+          width: 250,
+          height: 250,
+        },
+        fps: 5,
       })
 
       scanner.render(onScanSuccess, onScanError)
