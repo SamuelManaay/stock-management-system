@@ -170,6 +170,12 @@ const Scanner = () => {
       setShowQuantityModal(false)
       setScannedCode('')
       setCurrentItem(null)
+      // Restart scanner after modal closes
+      setTimeout(() => {
+        if (scannerRef.current) {
+          scannerRef.current.resume()
+        }
+      }, 100)
     } catch (error) {
       console.error('Error:', error)
       alert('Error updating item')
@@ -215,6 +221,12 @@ const Scanner = () => {
         unit: 'pcs',
         notes: ''
       })
+      // Restart scanner after modal closes
+      setTimeout(() => {
+        if (scannerRef.current) {
+          scannerRef.current.resume()
+        }
+      }, 100)
     } catch (error) {
       console.error('Error:', error)
       alert('Error adding item')
