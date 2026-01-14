@@ -11,8 +11,11 @@ const Scanner = () => {
   const [showAddModal, setShowAddModal] = useState(false)
   const [todayLogs, setTodayLogs] = useState([])
   const [loading, setLoading] = useState(false)
+  const [processing, setProcessing] = useState(false)
   const scannerRef = useRef(null)
   const scannerInitialized = useRef(false)
+  const lastScannedCode = useRef('')
+  const lastScanTime = useRef(0)
 
   const [formData, setFormData] = useState({
     item_code: '',
@@ -34,11 +37,12 @@ const Scanner = () => {
       scannerInitialized.current = true
       
       const scanner = new Html5QrcodeScanner('reader', {
-        qrbox: {
-          width: 250,
-          height: 250,
-        },
-        fps: 5,
+        fps: 10,
+        qrbox: { width: 300, height: 300 },
+        aspectRatio: 1.0,
+        showTorchButtonIfSupported: true,
+        showZoomSliderIfSupported: true,
+        defaultZoomValueIfSupported: 2,
       })
 
       scanner.render(onScanSuccess, onScanError)
@@ -69,7 +73,18 @@ const Scanner = () => {
   }
 
   const onScanSuccess = (decodedText) => {
-    handleScannedCode(decodedText)
+    // Debounce: ignore same code within 3 seconds
+    const now = Date.now()
+    if (decodedText === lastScannedCode.current && now - lastScanTime.current < 3000) {
+      return
+    }
+    
+    lastScannedCode.current = decodedText
+    lastScanTime.current = now
+    
+    if (!processing) {
+      handleScannedCode(decodedText)
+    }
   }
 
   const onScanError = (err) => {
@@ -77,7 +92,11 @@ const Scanner = () => {
   }
 
   const handleScannedCode = async (code) => {
+    if (processing) return
+    
+    setProcessing(true)
     setScannedCode(code)
+    console.log('Scanned code:', code)
 
     try {
       const { data: existingItem, error } = await supabase
@@ -88,18 +107,23 @@ const Scanner = () => {
 
       if (error) throw error
 
+      console.log('Existing item:', existingItem)
+
       if (existingItem) {
         const quantity = parseFloat(prompt('Enter quantity to add:', '1'))
         if (quantity && quantity > 0) {
           await updateExistingItem(existingItem, quantity)
         }
       } else {
-        setFormData({ ...formData, item_code: code })
+        console.log('Item not found, showing add modal')
+        setFormData(prev => ({ ...prev, item_code: code }))
         setShowAddModal(true)
       }
     } catch (error) {
       console.error('Error processing scan:', error)
-      alert('Error processing barcode. Please try again.')
+      alert('Error processing barcode: ' + error.message)
+    } finally {
+      setProcessing(false)
     }
   }
 
