@@ -41,7 +41,6 @@ const Scanner = () => {
         qrbox: { width: 250, height: 250 },
         disableFlip: false,
         rememberLastUsedCamera: true,
-        supportedScanTypes: [Html5QrcodeScanner.SCAN_TYPE_CAMERA],
         showTorchButtonIfSupported: true,
         showZoomSliderIfSupported: true,
       })
