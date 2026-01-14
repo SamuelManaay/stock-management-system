@@ -1,23 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { BrowserMultiFormatReader } from '@zxing/library'
-import { Camera, Plus, X, Package, Download } from 'lucide-react'
+import { Html5QrcodeScanner } from 'html5-qrcode'
+import { Package, Download } from 'lucide-react'
 import { format } from 'date-fns'
 
 const Scanner = () => {
   const { userProfile } = useAuth()
-  const [scanning, setScanning] = useState(false)
-  const [manualEntry, setManualEntry] = useState(false)
   const [scannedCode, setScannedCode] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [todayLogs, setTodayLogs] = useState([])
   const [loading, setLoading] = useState(false)
-  const [hasCamera, setHasCamera] = useState(false)
-  const [error, setError] = useState('')
-  const videoRef = useRef(null)
-  const readerRef = useRef(null)
-  const streamRef = useRef(null)
+  const scannerRef = useRef(null)
+  const scannerInitialized = useRef(false)
 
   const [formData, setFormData] = useState({
     item_code: '',
@@ -33,21 +28,27 @@ const Scanner = () => {
 
   useEffect(() => {
     fetchTodayLogs()
-    
-    // Initialize ZXing reader
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      setHasCamera(true)
-      const codeReader = new BrowserMultiFormatReader()
-      readerRef.current = codeReader
 
-      return () => {
-        if (readerRef.current) {
-          readerRef.current.reset()
-        }
+    // Initialize scanner
+    if (!scannerInitialized.current) {
+      scannerInitialized.current = true
+      
+      const scanner = new Html5QrcodeScanner('reader', {
+        qrbox: {
+          width: 250,
+          height: 250,
+        },
+        fps: 5,
+      })
+
+      scanner.render(onScanSuccess, onScanError)
+      scannerRef.current = scanner
+    }
+
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.clear().catch(console.error)
       }
-    } else {
-      setHasCamera(false)
-      setError('Camera not available. Please use manual entry.')
     }
   }, [])
 
@@ -67,77 +68,18 @@ const Scanner = () => {
     }
   }
 
-  const startCamera = async () => {
-    if (!readerRef.current || !hasCamera) {
-      setError('Camera not available')
-      return
-    }
-
-    try {
-      setScanning(true)
-      setError('')
-      
-      // Get camera stream and attach to video
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        } 
-      })
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        streamRef.current = stream
-        
-        // Wait for video to be ready
-        await new Promise((resolve) => {
-          videoRef.current.onloadedmetadata = () => {
-            videoRef.current.play()
-            resolve()
-          }
-        })
-      }
-      
-      // Start continuous scanning
-      readerRef.current.decodeFromVideoDevice(undefined, videoRef.current, (result, err) => {
-        if (result) {
-          handleScannedCode(result.text)
-        }
-      })
-    } catch (err) {
-      console.error('Scan error:', err)
-      if (err.name === 'NotAllowedError') {
-        setError('Camera permission denied. Please allow camera access.')
-      } else if (err.name === 'NotFoundError') {
-        setError('No camera found on this device.')
-      } else {
-        setError('Failed to start camera: ' + err.message)
-      }
-      setScanning(false)
-    }
+  const onScanSuccess = (decodedText) => {
+    handleScannedCode(decodedText)
   }
 
-  const stopCamera = () => {
-    if (readerRef.current) {
-      readerRef.current.reset()
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-      streamRef.current = null
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
-    }
-    setScanning(false)
+  const onScanError = (err) => {
+    // Ignore scan errors (happens continuously while scanning)
   }
 
   const handleScannedCode = async (code) => {
     setScannedCode(code)
-    stopCamera()
 
     try {
-      // Check if item exists
       const { data: existingItem, error } = await supabase
         .from('inventory_items')
         .select('*')
@@ -147,13 +89,11 @@ const Scanner = () => {
       if (error) throw error
 
       if (existingItem) {
-        // Item exists, show update quantity dialog
         const quantity = parseFloat(prompt('Enter quantity to add:', '1'))
         if (quantity && quantity > 0) {
           await updateExistingItem(existingItem, quantity)
         }
       } else {
-        // Item doesn't exist, show add form
         setFormData({ ...formData, item_code: code })
         setShowAddModal(true)
       }
@@ -166,7 +106,6 @@ const Scanner = () => {
   const updateExistingItem = async (item, quantity) => {
     setLoading(true)
     try {
-      // Update inventory quantity
       const newQuantity = parseFloat(item.current_quantity) + quantity
       const { error: updateError } = await supabase
         .from('inventory_items')
@@ -175,7 +114,6 @@ const Scanner = () => {
 
       if (updateError) throw updateError
 
-      // Log the action
       const { error: logError } = await supabase
         .from('daily_item_logs')
         .insert([{
@@ -207,8 +145,7 @@ const Scanner = () => {
     setLoading(true)
 
     try {
-      // Add to inventory
-      const { data: newItem, error: addError } = await supabase
+      const { error: addError } = await supabase
         .from('inventory_items')
         .insert([{
           item_code: formData.item_code,
@@ -218,12 +155,9 @@ const Scanner = () => {
           minimum_quantity: 0,
           unit: formData.unit
         }])
-        .select()
-        .single()
 
       if (addError) throw addError
 
-      // Log the action
       const { error: logError } = await supabase
         .from('daily_item_logs')
         .insert([{
@@ -298,133 +232,16 @@ const Scanner = () => {
           <h1 className="text-2xl font-bold text-gray-900">Item Scanner</h1>
           <p className="text-gray-600">Scan barcodes to track inventory</p>
         </div>
-        <button
-          onClick={exportToCSV}
-          className="btn-secondary flex items-center"
-        >
+        <button onClick={exportToCSV} className="btn-secondary flex items-center">
           <Download className="h-4 w-4 mr-2" />
           Export Today's Logs
         </button>
       </div>
 
-      {/* Scanner Section */}
+      {/* Scanner */}
       <div className="card">
-        <h2 className="text-lg font-semibold mb-4">Scan Item</h2>
-        
-        {error && (
-          <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg">
-            {error}
-          </div>
-        )}
-        
-        {!hasCamera ? (
-          <div className="text-center py-8">
-            <p className="text-gray-600 mb-4">Camera not available. This feature requires:</p>
-            <ul className="text-left inline-block text-sm text-gray-600 mb-4">
-              <li>• HTTPS connection</li>
-              <li>• Camera permissions</li>
-              <li>• Modern browser</li>
-            </ul>
-            <button
-              onClick={() => setManualEntry(true)}
-              className="btn-primary w-full"
-            >
-              Use Manual Entry Instead
-            </button>
-          </div>
-        ) : !scanning ? (
-          <div className="space-y-4">
-            <button
-              onClick={startCamera}
-              className="btn-primary w-full flex items-center justify-center"
-            >
-              <Camera className="h-5 w-5 mr-2" />
-              Start Camera Scanner
-            </button>
-            
-            <div className="text-center text-gray-500">or</div>
-            
-            <button
-              onClick={() => setManualEntry(true)}
-              className="btn-secondary w-full"
-            >
-              Enter Barcode Manually
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="relative bg-black rounded-lg overflow-hidden" style={{ height: '400px' }}>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{ 
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover'
-                }}
-              />
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-64 h-32 border-2 border-red-500"></div>
-              </div>
-            </div>
-            
-            <div className="flex space-x-3">
-              <button
-                onClick={stopCamera}
-                className="btn-danger flex-1"
-              >
-                <X className="h-5 w-5 mr-2" />
-                Stop Scanner
-              </button>
-            </div>
-            <p className="text-sm text-center text-gray-600">Scanning... Position barcode within the red box</p>
-          </div>
-        )}
-
-        {manualEntry && (
-          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Enter Barcode/QR Code
-            </label>
-            <div className="flex space-x-2">
-              <input
-                type="text"
-                className="input-field flex-1"
-                placeholder="Enter code..."
-                value={scannedCode}
-                onChange={(e) => setScannedCode(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && scannedCode) {
-                    handleScannedCode(scannedCode)
-                    setManualEntry(false)
-                  }
-                }}
-              />
-              <button
-                onClick={() => {
-                  if (scannedCode) {
-                    handleScannedCode(scannedCode)
-                    setManualEntry(false)
-                  }
-                }}
-                className="btn-primary"
-              >
-                Submit
-              </button>
-              <button
-                onClick={() => {
-                  setManualEntry(false)
-                  setScannedCode('')
-                }}
-                className="btn-secondary"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
+        <h2 className="text-lg font-semibold mb-4">Scan Barcode/QR Code</h2>
+        <div id="reader" style={{ width: '100%' }}></div>
       </div>
 
       {/* Today's Logs */}
