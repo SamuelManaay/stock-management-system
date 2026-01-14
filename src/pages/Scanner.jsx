@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
-import { useZxing } from 'react-zxing'
+import { useState, useEffect, useRef } from 'react'
+import { Html5Qrcode } from 'html5-qrcode'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { Package, Download, X } from 'lucide-react'
+import { Package, Download, X, Camera } from 'lucide-react'
 import { format } from 'date-fns'
 
 const Scanner = () => {
@@ -14,6 +14,10 @@ const Scanner = () => {
   const [todayLogs, setTodayLogs] = useState([])
   const [loading, setLoading] = useState(false)
   const [quantityInput, setQuantityInput] = useState('1')
+  const [scanning, setScanning] = useState(false)
+  const [cameraError, setCameraError] = useState('')
+  const scannerRef = useRef(null)
+  const lastScanRef = useRef({ code: '', time: 0 })
 
   const [formData, setFormData] = useState({
     item_code: '',
@@ -24,18 +28,63 @@ const Scanner = () => {
     notes: ''
   })
 
-  const { ref } = useZxing({
-    onDecodeResult(result) {
-      const code = result.getText()
-      if (code && code !== scannedCode) {
-        handleScannedCode(code)
-      }
-    },
-  })
-
   useEffect(() => {
     fetchTodayLogs()
+    // Delay scanner start to ensure DOM is ready
+    const timer = setTimeout(() => startScanner(), 500)
+    return () => {
+      clearTimeout(timer)
+      stopScanner()
+    }
   }, [])
+
+  const startScanner = async () => {
+    if (scanning) return
+    setCameraError('')
+    
+    try {
+      // Check if running on HTTPS or localhost
+      const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost'
+      if (!isSecure && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+        setCameraError('Camera requires HTTPS on iOS/iPad. Please deploy to Netlify or use localhost on desktop.')
+        return
+      }
+
+      const devices = await Html5Qrcode.getCameras()
+      if (!devices || devices.length === 0) {
+        setCameraError('No camera found on this device')
+        return
+      }
+
+      const scanner = new Html5Qrcode('reader')
+      scannerRef.current = scanner
+
+      await scanner.start(
+        devices[0].id,
+        { fps: 10, qrbox: 250 },
+        onScanSuccess
+      )
+      setScanning(true)
+    } catch (err) {
+      console.error('Scanner error:', err)
+      setCameraError(err.message || 'Camera access denied. Please allow camera permissions in browser settings.')
+    }
+  }
+
+  const stopScanner = () => {
+    if (scannerRef.current && scanning) {
+      scannerRef.current.stop().catch(console.error)
+      setScanning(false)
+    }
+  }
+
+  const onScanSuccess = (decodedText) => {
+    const now = Date.now()
+    if (decodedText && (decodedText !== lastScanRef.current.code || now - lastScanRef.current.time > 2000)) {
+      lastScanRef.current = { code: decodedText, time: now }
+      handleScannedCode(decodedText)
+    }
+  }
 
   const fetchTodayLogs = async () => {
     try {
@@ -55,6 +104,7 @@ const Scanner = () => {
 
   const handleScannedCode = async (code) => {
     setScannedCode(code)
+    console.log('Scanned code:', code)
 
     try {
       const { data: existingItem, error } = await supabase
@@ -65,12 +115,16 @@ const Scanner = () => {
 
       if (error) throw error
 
+      console.log('Existing item:', existingItem)
+
       if (existingItem) {
+        console.log('Item exists, showing quantity modal')
         setCurrentItem(existingItem)
         setQuantityInput('1')
         setShowQuantityModal(true)
       } else {
-        setFormData(prev => ({ ...prev, item_code: code }))
+        console.log('Item does not exist, showing add modal')
+        setFormData({ item_code: code, item_name: '', category: 'materials', quantity: 1, unit: 'pcs', notes: '' })
         setShowAddModal(true)
       }
     } catch (error) {
@@ -89,12 +143,10 @@ const Scanner = () => {
     setLoading(true)
     try {
       const newQuantity = parseFloat(currentItem.current_quantity) + quantity
-      const { error: updateError } = await supabase
+      await supabase
         .from('inventory_items')
         .update({ current_quantity: newQuantity })
         .eq('id', currentItem.id)
-
-      if (updateError) throw updateError
 
       await supabase.from('daily_item_logs').insert([{
         item_code: currentItem.item_code,
@@ -104,7 +156,7 @@ const Scanner = () => {
         unit: currentItem.unit,
         action_type: 'update',
         scanned_by: userProfile.id,
-        notes: `Updated quantity from ${currentItem.current_quantity} to ${newQuantity}`
+        notes: `Updated from ${currentItem.current_quantity} to ${newQuantity}`
       }])
 
       alert(`✓ ${currentItem.name}: +${quantity} ${currentItem.unit}`)
@@ -113,7 +165,7 @@ const Scanner = () => {
       setScannedCode('')
       setCurrentItem(null)
     } catch (error) {
-      console.error('Error updating item:', error)
+      console.error('Error:', error)
       alert('Error updating item')
     } finally {
       setLoading(false)
@@ -145,7 +197,7 @@ const Scanner = () => {
         notes: formData.notes
       }])
 
-      alert('✓ Item added successfully!')
+      alert('✓ Item added!')
       await fetchTodayLogs()
       setShowAddModal(false)
       setScannedCode('')
@@ -158,7 +210,7 @@ const Scanner = () => {
         notes: ''
       })
     } catch (error) {
-      console.error('Error adding item:', error)
+      console.error('Error:', error)
       alert('Error adding item')
     } finally {
       setLoading(false)
@@ -171,7 +223,7 @@ const Scanner = () => {
       return
     }
 
-    const headers = ['Date', 'Item Code', 'Item Name', 'Category', 'Quantity', 'Unit', 'Action', 'Notes']
+    const headers = ['Date', 'Item Code', 'Item Name', 'Category', 'Quantity', 'Unit', 'Action']
     const rows = todayLogs.map(log => [
       format(new Date(log.created_at), 'yyyy-MM-dd HH:mm:ss'),
       log.item_code,
@@ -179,8 +231,7 @@ const Scanner = () => {
       log.category,
       log.quantity,
       log.unit,
-      log.action_type,
-      log.notes || ''
+      log.action_type
     ])
 
     const csvContent = [
@@ -192,7 +243,7 @@ const Scanner = () => {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `daily-logs-${format(new Date(), 'yyyy-MM-dd')}.csv`
+    a.download = `logs-${format(new Date(), 'yyyy-MM-dd')}.csv`
     a.click()
     window.URL.revokeObjectURL(url)
   }
@@ -206,24 +257,37 @@ const Scanner = () => {
         </div>
         <button onClick={exportToCSV} className="btn-secondary flex items-center">
           <Download className="h-4 w-4 mr-2" />
-          Export Today's Logs
+          Export
         </button>
       </div>
 
-      {/* Scanner */}
       <div className="card">
-        <h2 className="text-lg font-semibold mb-4">Scan Barcode</h2>
-        <div className="relative bg-black rounded-lg overflow-hidden" style={{ maxWidth: '500px', margin: '0 auto' }}>
-          <video ref={ref} className="w-full" />
+        <div className="flex items-center gap-2 mb-4">
+          <Camera className="h-5 w-5" />
+          <h2 className="text-lg font-semibold">Scan Barcode</h2>
+          {!scanning && !cameraError && (
+            <button onClick={startScanner} className="ml-auto btn-primary text-sm">
+              Start Camera
+            </button>
+          )}
         </div>
+        <div id="reader" className="w-full max-w-lg mx-auto"></div>
+        {cameraError && (
+          <div className="mt-4 p-4 bg-red-50 text-red-700 rounded">
+            <p className="font-semibold">Camera Error:</p>
+            <p className="text-sm">{cameraError}</p>
+            <button onClick={startScanner} className="mt-2 btn-primary text-sm">
+              Retry
+            </button>
+          </div>
+        )}
         {scannedCode && (
-          <p className="mt-4 text-center text-sm text-gray-600">
-            Last scanned: <span className="font-mono font-semibold">{scannedCode}</span>
+          <p className="mt-4 text-center text-sm">
+            Last: <span className="font-mono font-semibold text-green-600">{scannedCode}</span>
           </p>
         )}
       </div>
 
-      {/* Quantity Modal */}
       {showQuantityModal && currentItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
@@ -233,7 +297,6 @@ const Scanner = () => {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            
             <div className="space-y-4">
               <div>
                 <p className="text-sm text-gray-600">Item Code</p>
@@ -248,9 +311,7 @@ const Scanner = () => {
                 <p className="font-semibold">{currentItem.current_quantity} {currentItem.unit}</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Quantity to Add
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Quantity to Add</label>
                 <input
                   type="number"
                   value={quantityInput}
@@ -262,18 +323,10 @@ const Scanner = () => {
                 />
               </div>
               <div className="flex gap-3">
-                <button
-                  onClick={() => setShowQuantityModal(false)}
-                  className="btn-secondary flex-1"
-                  disabled={loading}
-                >
+                <button onClick={() => setShowQuantityModal(false)} className="btn-secondary flex-1" disabled={loading}>
                   Cancel
                 </button>
-                <button
-                  onClick={handleQuantitySubmit}
-                  className="btn-primary flex-1"
-                  disabled={loading}
-                >
+                <button onClick={handleQuantitySubmit} className="btn-primary flex-1" disabled={loading}>
                   {loading ? 'Adding...' : 'Add'}
                 </button>
               </div>
@@ -282,7 +335,6 @@ const Scanner = () => {
         </div>
       )}
 
-      {/* Add New Item Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
@@ -292,18 +344,10 @@ const Scanner = () => {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            
             <form onSubmit={handleAddNewItem} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Item Code</label>
-                <input
-                  type="text"
-                  value={formData.item_code}
-                  onChange={(e) => setFormData({ ...formData, item_code: e.target.value })}
-                  className="input"
-                  required
-                  readOnly
-                />
+                <input type="text" value={formData.item_code} className="input" readOnly />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Item Name</label>
@@ -318,11 +362,7 @@ const Scanner = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                <select
-                  value={formData.category}
-                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                  className="input"
-                >
+                <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} className="input">
                   <option value="materials">Materials</option>
                   <option value="tools">Tools</option>
                   <option value="equipment">Equipment</option>
@@ -342,11 +382,7 @@ const Scanner = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Unit</label>
-                <select
-                  value={formData.unit}
-                  onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                  className="input"
-                >
+                <select value={formData.unit} onChange={(e) => setFormData({ ...formData, unit: e.target.value })} className="input">
                   <option value="pcs">Pieces</option>
                   <option value="kg">Kilograms</option>
                   <option value="lbs">Pounds</option>
@@ -367,19 +403,10 @@ const Scanner = () => {
                 />
               </div>
               <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="btn-secondary flex-1"
-                  disabled={loading}
-                >
+                <button type="button" onClick={() => setShowAddModal(false)} className="btn-secondary flex-1" disabled={loading}>
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="btn-primary flex-1"
-                  disabled={loading}
-                >
+                <button type="submit" className="btn-primary flex-1" disabled={loading}>
                   {loading ? 'Adding...' : 'Add Item'}
                 </button>
               </div>
@@ -388,10 +415,8 @@ const Scanner = () => {
         </div>
       )}
 
-      {/* Today's Logs */}
       <div className="card">
         <h2 className="text-lg font-semibold mb-4">Today's Scanned Items ({todayLogs.length})</h2>
-        
         {todayLogs.length === 0 ? (
           <div className="text-center py-8">
             <Package className="mx-auto h-12 w-12 text-gray-400" />
@@ -403,25 +428,19 @@ const Scanner = () => {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item Code</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Quantity</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {todayLogs.map((log) => (
                   <tr key={log.id}>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      {format(new Date(log.created_at), 'HH:mm:ss')}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-mono text-gray-900">{log.item_code}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900">{log.item_name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900 capitalize">{log.category}</td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      {log.quantity} {log.unit}
-                    </td>
+                    <td className="px-4 py-3 text-sm">{format(new Date(log.created_at), 'HH:mm:ss')}</td>
+                    <td className="px-4 py-3 text-sm font-mono">{log.item_code}</td>
+                    <td className="px-4 py-3 text-sm">{log.item_name}</td>
+                    <td className="px-4 py-3 text-sm">{log.quantity} {log.unit}</td>
                     <td className="px-4 py-3 text-sm">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                         log.action_type === 'add' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
