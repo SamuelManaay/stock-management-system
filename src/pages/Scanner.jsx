@@ -37,11 +37,12 @@ const Scanner = () => {
       scannerInitialized.current = true
       
       const scanner = new Html5QrcodeScanner('reader', {
-        qrbox: {
-          width: 250,
-          height: 250,
-        },
-        fps: 5,
+        fps: 20,
+        disableFlip: false,
+        rememberLastUsedCamera: true,
+        supportedScanTypes: [Html5QrcodeScanner.SCAN_TYPE_CAMERA],
+        showTorchButtonIfSupported: true,
+        showZoomSliderIfSupported: true,
       })
 
       scanner.render(onScanSuccess, onScanError)
@@ -72,9 +73,8 @@ const Scanner = () => {
   }
 
   const onScanSuccess = (decodedText) => {
-    // Debounce: ignore same code within 3 seconds
     const now = Date.now()
-    if (decodedText === lastScannedCode.current && now - lastScanTime.current < 3000) {
+    if (decodedText === lastScannedCode.current && now - lastScanTime.current < 2000) {
       return
     }
     
@@ -95,7 +95,7 @@ const Scanner = () => {
     
     setProcessing(true)
     setScannedCode(code)
-    console.log('Scanned code:', code)
+    console.log('Scanned:', code)
 
     try {
       const { data: existingItem, error } = await supabase
@@ -106,22 +106,21 @@ const Scanner = () => {
 
       if (error) throw error
 
-      console.log('Existing item:', existingItem)
-
       if (existingItem) {
         const quantity = parseFloat(prompt('Enter quantity to add:', '1'))
         if (quantity && quantity > 0) {
           await updateExistingItem(existingItem, quantity)
         }
+        setProcessing(false)
       } else {
-        console.log('Item not found, showing add modal')
+        console.log('New item, showing modal')
         setFormData(prev => ({ ...prev, item_code: code }))
         setShowAddModal(true)
+        setProcessing(false)
       }
     } catch (error) {
-      console.error('Error processing scan:', error)
-      alert('Error processing barcode: ' + error.message)
-    } finally {
+      console.error('Error:', error)
+      alert('Error: ' + error.message)
       setProcessing(false)
     }
   }
