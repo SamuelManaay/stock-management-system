@@ -118,6 +118,13 @@ const Layout = ({ children }) => {
               <span className="text-sm text-gray-600">
                 Welcome, {userProfile?.role || 'User'}
               </span>
+              <button
+                onClick={handleSignOut}
+                className="lg:hidden flex items-center text-gray-500 hover:text-gray-700"
+                title="Logout"
+              >
+                <LogOut className="h-5 w-5" />
+              </button>
             </div>
           </div>
         </header>
