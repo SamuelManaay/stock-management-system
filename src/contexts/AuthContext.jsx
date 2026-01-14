@@ -64,15 +64,21 @@ export const AuthProvider = ({ children }) => {
         .eq('id', userId)
         .single()
       
-      if (error) {
-        console.error('Error fetching user profile:', error)
-        setUserProfile({ id: userId, role: 'worker' })
+      if (error || !data || !data.role) {
+        console.error('Error fetching user profile or no role found:', error)
+        // Sign out if no valid profile/role found
+        await supabase.auth.signOut()
+        setUser(null)
+        setUserProfile(null)
       } else if (data) {
+        console.log('User profile loaded:', data)
         setUserProfile(data)
       }
     } catch (error) {
       console.error('Error fetching user profile:', error)
-      setUserProfile({ id: userId, role: 'worker' })
+      await supabase.auth.signOut()
+      setUser(null)
+      setUserProfile(null)
     } finally {
       setLoading(false)
     }
