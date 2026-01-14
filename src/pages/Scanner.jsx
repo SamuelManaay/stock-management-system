@@ -38,6 +38,7 @@ const Scanner = () => {
       
       const scanner = new Html5QrcodeScanner('reader', {
         fps: 20,
+        qrbox: { width: 250, height: 250 },
         disableFlip: false,
         rememberLastUsedCamera: true,
         supportedScanTypes: [Html5QrcodeScanner.SCAN_TYPE_CAMERA],
