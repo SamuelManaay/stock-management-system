@@ -5,64 +5,56 @@ import { useAuth } from '../contexts/AuthContext'
 import { Package, Users, Clock, DollarSign, AlertTriangle } from 'lucide-react'
 
 const Dashboard = () => {
-  const { userProfile } = useAuth()
+  const { userProfile, preloadedData, dataLoading } = useAuth()
   const [stats, setStats] = useState({
     totalEmployees: 0,
     activeProjects: 0,
     lowStockItems: 0,
-    todayAttendance: 0
+    todayAttendance: 0,
+    roleCounts: {}
   })
   const [loading, setLoading] = useState(true)
 
   const isAdmin = userProfile?.role === 'admin'
 
   useEffect(() => {
-    fetchDashboardStats()
-  }, [])
+    if (preloadedData.inventory.length > 0 || !dataLoading) {
+      calculateStats()
+    }
+  }, [preloadedData, dataLoading])
 
-  const fetchDashboardStats = async () => {
+  const calculateStats = () => {
     try {
-      // Only fetch employee and project counts for admin
-      if (isAdmin) {
-        const { count: employeesCount } = await supabase
-          .from('employees')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'active')
-
-        const { count: projectsCount } = await supabase
-          .from('projects')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'active')
-
-        const today = new Date().toISOString().split('T')[0]
-        const { count: attendanceCount } = await supabase
-          .from('attendance_logs')
-          .select('*', { count: 'exact', head: true })
-          .eq('attendance_date', today)
-
-        setStats(prev => ({
-          ...prev,
-          totalEmployees: employeesCount || 0,
-          activeProjects: projectsCount || 0,
-          todayAttendance: attendanceCount || 0
-        }))
-      }
-
-      // Fetch low stock items for everyone
-      const { data: lowStockData } = await supabase
-        .from('inventory_items')
-        .select('current_quantity, minimum_quantity')
-      
-      const lowStockCount = lowStockData?.filter(
+      // Calculate stats from preloaded data
+      const lowStockCount = preloadedData.inventory.filter(
         item => item.current_quantity < item.minimum_quantity
-      ).length || 0
+      ).length
 
-      setStats(prev => ({
-        ...prev,
-        lowStockItems: lowStockCount
-      }))
+      const activeEmployees = preloadedData.employees.filter(
+        emp => emp.status === 'active'
+      ).length
+
+      const activeProjects = preloadedData.projects.filter(
+        proj => proj.status === 'active'
+      ).length
+
+      // Calculate role counts
+      const roleCounts = preloadedData.users.reduce((acc, user) => {
+        if (user.role) {
+          acc[user.role] = (acc[user.role] || 0) + 1
+        }
+        return acc
+      }, {})
+
+      setStats({
+        totalEmployees: activeEmployees,
+        activeProjects: activeProjects,
+        lowStockItems: lowStockCount,
+        todayAttendance: preloadedData.attendance.length,
+        roleCounts
+      })
     } catch (error) {
-      console.error('Error fetching dashboard stats:', error)
+      console.error('Error calculating stats:', error)
     } finally {
       setLoading(false)
     }
@@ -162,6 +154,21 @@ const Dashboard = () => {
           )}
         </div>
       </div>
+
+      {/* Active Roles */}
+      {isAdmin && Object.keys(stats.roleCounts).length > 0 && (
+        <div className="card">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Active Roles</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {Object.entries(stats.roleCounts).map(([role, count]) => (
+              <div key={role} className="text-center p-3 bg-gray-50 rounded-lg">
+                <p className="text-2xl font-bold text-gray-900">{count}</p>
+                <p className="text-sm text-gray-600 capitalize">{role}s</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recent Activity */}
       <div className="card">

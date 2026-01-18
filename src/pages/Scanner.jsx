@@ -112,6 +112,11 @@ const Scanner = () => {
     setScannedCode(code)
     console.log('Scanned code:', code)
 
+    // Pause scanner while processing
+    if (scannerRef.current) {
+      scannerRef.current.pause()
+    }
+
     try {
       const { data: existingItem, error } = await supabase
         .from('inventory_items')
@@ -136,6 +141,10 @@ const Scanner = () => {
     } catch (error) {
       console.error('Error:', error)
       alert('Error: ' + error.message)
+      // Resume scanner on error
+      if (scannerRef.current) {
+        scannerRef.current.resume()
+      }
     }
   }
 
@@ -341,7 +350,19 @@ const Scanner = () => {
                 />
               </div>
               <div className="flex gap-3">
-                <button onClick={() => setShowQuantityModal(false)} className="btn-secondary flex-1" disabled={loading}>
+                <button
+                  onClick={() => {
+                    setShowQuantityModal(false)
+                    // Resume scanner when modal closes
+                    setTimeout(() => {
+                      if (scannerRef.current) {
+                        scannerRef.current.resume()
+                      }
+                    }, 100)
+                  }}
+                  className="btn-secondary flex-1"
+                  disabled={loading}
+                >
                   Cancel
                 </button>
                 <button onClick={handleQuantitySubmit} className="btn-primary flex-1" disabled={loading}>
@@ -421,7 +442,20 @@ const Scanner = () => {
                 />
               </div>
               <div className="flex gap-3">
-                <button type="button" onClick={() => setShowAddModal(false)} className="btn-secondary flex-1" disabled={loading}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddModal(false)
+                    // Resume scanner when modal closes
+                    setTimeout(() => {
+                      if (scannerRef.current) {
+                        scannerRef.current.resume()
+                      }
+                    }, 100)
+                  }}
+                  className="btn-secondary flex-1"
+                  disabled={loading}
+                >
                   Cancel
                 </button>
                 <button type="submit" className="btn-primary flex-1" disabled={loading}>

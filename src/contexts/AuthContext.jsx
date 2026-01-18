@@ -15,74 +15,140 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [preloadedData, setPreloadedData] = useState({
+    inventory: [],
+    employees: [],
+    projects: [],
+    attendance: [],
+    payroll: [],
+    dailyLogs: [],
+    users: []
+  })
 
+  // Initialize auth - runs once on mount
   useEffect(() => {
-    // Set a maximum loading time of 10 seconds
-    const maxLoadingTimeout = setTimeout(() => {
-      console.log('Max loading timeout reached, stopping loading')
-      setLoading(false)
-    }, 10000)
+    let mounted = true
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      console.log('Session:', session)
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchUserProfile(session.user.id)
-      } else {
-        setLoading(false)
-      }
-      clearTimeout(maxLoadingTimeout)
-    }).catch(err => {
-      console.error('Session error:', err)
-      setLoading(false)
-      clearTimeout(maxLoadingTimeout)
-    })
+    const initAuth = async () => {
+      try {
+        console.log('Initializing auth...')
+        
+        // Get session
+        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        if (!mounted) return
+        
+        if (error || !session?.user) {
+          console.log('No valid session')
+          setUser(null)
+          setUserProfile(null)
+          setLoading(false)
+          return
+        }
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        await fetchUserProfile(session.user.id)
-      } else {
-        setUserProfile(null)
+        console.log('Session found:', session.user.email)
+        setUser(session.user)
+
+        // Get profile
+        const { data: profile, error: profileError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single()
+
+        if (!mounted) return
+
+        if (profileError || !profile?.role) {
+          console.error('Profile error:', profileError)
+          await supabase.auth.signOut()
+          setUser(null)
+          setUserProfile(null)
+          setLoading(false)
+          return
+        }
+
+        console.log('Profile loaded:', profile)
+        setUserProfile(profile)
+
+        // Preload data
+        const today = new Date().toISOString().split('T')[0]
+        
+        const results = await Promise.allSettled([
+          supabase.from('inventory_items').select('*').order('name'),
+          profile.role === 'admin' || profile.role === 'hr' 
+            ? supabase.from('employees').select('*').order('created_at', { ascending: false })
+            : Promise.resolve({ data: [] }),
+          supabase.from('projects').select('*').order('created_at', { ascending: false }),
+          supabase.from('attendance_logs').select('*').eq('attendance_date', today),
+          supabase.from('payroll').select('*').order('created_at', { ascending: false }).limit(10),
+          supabase.from('daily_item_logs').select('*').eq('log_date', today).order('created_at', { ascending: false }),
+          supabase.from('users').select('*').order('created_at', { ascending: false })
+        ])
+
+        if (!mounted) return
+
+        const [inventory, employees, projects, attendance, payroll, dailyLogs, users] = results.map(result => 
+          result.status === 'fulfilled' ? result.value : { data: [] }
+        )
+
+        setPreloadedData({
+          inventory: inventory.data || [],
+          employees: employees.data || [],
+          projects: projects.data || [],
+          attendance: attendance.data || [],
+          payroll: payroll.data || [],
+          dailyLogs: dailyLogs.data || [],
+          users: users.data || []
+        })
+
+        console.log('Auth initialization complete')
+        
+      } catch (error) {
+        console.error('Auth init error:', error)
+        if (mounted) {
+          await supabase.auth.signOut()
+          setUser(null)
+          setUserProfile(null)
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
       }
-      setLoading(false)
-    })
+    }
+
+    initAuth()
 
     return () => {
-      clearTimeout(maxLoadingTimeout)
-      subscription.unsubscribe()
+      mounted = false
     }
-  }, [])
+  }, []) // No dependencies - runs once
 
-  const fetchUserProfile = async (userId) => {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single()
+  // Auth state listener
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Auth event:', event)
       
-      if (error || !data || !data.role) {
-        console.error('Error fetching user profile or no role found:', error)
-        // Sign out if no valid profile/role found
-        await supabase.auth.signOut()
+      if (event === 'SIGNED_OUT' || !session) {
         setUser(null)
         setUserProfile(null)
-      } else if (data) {
-        console.log('User profile loaded:', data)
-        setUserProfile(data)
+        setPreloadedData({
+          inventory: [],
+          employees: [],
+          projects: [],
+          attendance: [],
+          payroll: [],
+          dailyLogs: [],
+          users: []
+        })
+        return
       }
-    } catch (error) {
-      console.error('Error fetching user profile:', error)
-      await supabase.auth.signOut()
-      setUser(null)
-      setUserProfile(null)
-    } finally {
-      setLoading(false)
-    }
-  }
+
+      // Don't reload on SIGNED_IN - let the normal flow handle it
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   const signIn = async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -95,49 +161,41 @@ export const AuthProvider = ({ children }) => {
   const signUp = async (email, password, userData) => {
     const { data, error } = await supabase.auth.signUp({
       email,
-      password,
-      options: {
-        emailRedirectTo: window.location.origin,
-        data: {
-          email_confirm: true
-        }
-      }
+      password
     })
 
     if (data.user && !error) {
-      // Auto-confirm email
-      await supabase.auth.admin.updateUserById(data.user.id, {
-        email_confirm: true
-      })
-      
-      // Create user profile
-      await supabase.from('users').insert([
-        {
-          id: data.user.id,
-          email,
-          role: userData.role || 'worker'
-        }
-      ])
-      
-      // Link to existing employee record by email
-      await supabase
-        .from('employees')
-        .update({ user_id: data.user.id })
-        .eq('email', email)
+      await supabase.from('users').insert([{
+        id: data.user.id,
+        email,
+        role: userData.role || 'worker'
+      }])
     }
 
     return { data, error }
   }
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut()
-    return { error }
+    await supabase.auth.signOut()
+    setUser(null)
+    setUserProfile(null)
+    setPreloadedData({
+      inventory: [],
+      employees: [],
+      projects: [],
+      attendance: [],
+      payroll: [],
+      dailyLogs: [],
+      users: []
+    })
+    return { error: null }
   }
 
   const value = {
     user,
     userProfile,
     loading,
+    preloadedData,
     signIn,
     signUp,
     signOut
